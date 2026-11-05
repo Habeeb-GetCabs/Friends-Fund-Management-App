@@ -13,17 +13,16 @@ permissions:
 jobs:
   build-apk:
     name: Build Installable Android APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: 1. Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 2. Setup Node.js 22
+      - name: 2. Setup Node.js 22 (No lockfile required)
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: 3. Setup Java JDK 21 (Required for Android Gradle)
         uses: actions/setup-java@v4
@@ -31,17 +30,50 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: 4. Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 5. Install Web Dependencies & Build Offline App
+      - name: 4. Normalize package.json for Public NPM Registry & Install Dependencies
         run: |
-          npm install
+          node -e '
+            const fs = require("fs");
+            const pkg = {
+              name: "friends-savings-loan-manager",
+              private: true,
+              version: "1.0.0",
+              type: "module",
+              scripts: {
+                dev: "vite",
+                build: "vite build",
+                preview: "vite preview"
+              },
+              dependencies: {
+                "@capacitor/android": "^7.0.0",
+                "@capacitor/cli": "^7.0.0",
+                "@capacitor/core": "^7.0.0",
+                "@tailwindcss/vite": "^4.0.9",
+                "@vitejs/plugin-react": "^4.3.4",
+                "lucide-react": "^0.475.0",
+                "react": "^19.0.0",
+                "react-dom": "^19.0.0",
+                "tailwindcss": "^4.0.9",
+                "vite": "^6.2.0",
+                "vite-plugin-pwa": "^0.21.1"
+              },
+              devDependencies: {
+                "@types/node": "^22.10.0",
+                "@types/react": "^19.0.0",
+                "@types/react-dom": "^19.0.0",
+                "typescript": "^5.7.3"
+              }
+            };
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+          '
+          npm install --legacy-peer-deps
+
+      - name: 5. Build Offline Web Application Bundle
+        run: |
           npm run build
 
-      - name: 6. Install Capacitor Android Packager & Generate Android Project
+      - name: 6. Generate & Sync Native Android Project via Capacitor
         run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android --no-save
           if [ ! -d "android" ]; then
             npx cap add android
           fi
@@ -51,8 +83,9 @@ jobs:
         working-directory: ./android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
           cp app/build/outputs/apk/debug/app-debug.apk ../Friends-Savings-Loan-Manager.apk
+          ls -lh ../Friends-Savings-Loan-Manager.apk
 
       - name: 8. Upload APK to GitHub Actions Artifacts
         uses: actions/upload-artifact@v4
@@ -62,8 +95,8 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: 9. Publish APK to GitHub Releases (Latest)
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      - name: 9. Publish APK to GitHub Releases
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}

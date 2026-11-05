@@ -2,7 +2,6 @@
   "appId": "com.friendsfund.savingsmanager",
   "appName": "Friends Savings & Loan Manager",
   "webDir": "dist",
-  "bundledWebRuntime": false,
   "server": {
     "androidScheme": "https"
   },
