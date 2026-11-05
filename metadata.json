@@ -1,0 +1,6 @@
+{
+  "name": "Friends Savings & Loan Manager",
+  "description": "Offline-first daily savings ledger and 10-week interest-free emergency loan manager for a private group of seven friends.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,83 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Installable Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 3. Setup Java JDK 21 (Required for Android Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: 4. Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 5. Install Web Dependencies & Build Offline App
+        run: |
+          npm install
+          npm run build
+
+      - name: 6. Install Capacitor Android Packager & Generate Android Project
+        run: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android --no-save
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: 7. Compile Installable Android APK via Gradle
+        working-directory: ./android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../Friends-Savings-Loan-Manager.apk
+
+      - name: 8. Upload APK to GitHub Actions Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Friends-Savings-Loan-Manager-APK
+          path: Friends-Savings-Loan-Manager.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: 9. Publish APK to GitHub Releases (Latest)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Friends Savings & Loan Manager APK (Build #${{ github.run_number }})"
+          body: |
+            ### Friends Savings & Interest-Free Loan Manager (Android APK)
+            - **7 Preconfigured Members**: Sathish, Kumar, Santhosh, Prakash, Ranjth, Basheer, Mahalakshmi
+            - **Daily Savings System**: Default ₹100/day (₹700 group daily target), partial/missed/advance allocation & audit trail
+            - **Interest-Free Emergency Loans**: 10-week repayment tracker (0% interest)
+            - **100% Offline-First**: Runs completely offline on Android with local database persistence, JSON backup/restore, and PDF/CSV exports.
+
+            **How to install on Android:**
+            1. Download `Friends-Savings-Loan-Manager.apk` below.
+            2. Open the downloaded file on your Android phone and tap **Install**.
+          files: Friends-Savings-Loan-Manager.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
