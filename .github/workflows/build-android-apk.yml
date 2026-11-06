@@ -101,23 +101,15 @@ jobs:
           fi
 
           # 2. Auto-increment versionCode and versionName in android/app/build.gradle
-          # so Android always recognizes new builds as an in-place upgrade over the previous version
-          BUILD_VER_CODE=$((100 + ${{ github.run_number }}))
-          BUILD_VER_NAME="2.0.${{ github.run_number }}"
-          node -e '
-            const fs = require("fs");
-            const gradlePath = "android/app/build.gradle";
-            if (fs.existsSync(gradlePath)) {
-              let content = fs.readFileSync(gradlePath, "utf8");
-              content = content.replace(/versionCode\s+\d+/, "versionCode " + process.env.BUILD_VER_CODE);
-              content = content.replace(/versionName\s+"[^"]+"/, "versionName \"" + process.env.BUILD_VER_NAME + "\"");
-              fs.writeFileSync(gradlePath, content);
-            }
-          ' BUILD_VER_CODE="$BUILD_VER_CODE" BUILD_VER_NAME="$BUILD_VER_NAME"
+          export BUILD_VER_CODE=$((100 + ${{ github.run_number }}))
+          export BUILD_VER_NAME="2.0.${{ github.run_number }}"
+          sed -i "s/versionCode 1/versionCode ${BUILD_VER_CODE}/g" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"${BUILD_VER_NAME}\"/g" android/app/build.gradle
+          echo "Updated version in android/app/build.gradle:"
+          grep -E "versionCode|versionName" android/app/build.gradle
 
           # 3. Inject custom Friends Savings & Loan Manager launcher icon into all Android mipmap directories
           if [ -f "public/pwa-512x512.png" ]; then
-            rm -rf android/app/src/main/res/mipmap-anydpi-v26
             for dir in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
               target="android/app/src/main/res/$dir"
               mkdir -p "$target"
@@ -151,7 +143,7 @@ jobs:
           name: "Friends Savings & Loan Manager APK v2.0.${{ github.run_number }}"
           body: |
             ### Friends Savings & Interest-Free Loan Manager (Android APK v2.0.${{ github.run_number }})
-            - **Custom App Icon & Consistent Update Signature**: Updates directly over existing v2+ installations while preserving all local data. *(Note: If you have the very first test build installed that used a temporary runner key, uninstall that old copy once before installing this signed v2 APK; all future updates will install directly over this app without uninstalling.)*
+            - **Custom App Icon & Consistent Update Signature**: Updates directly over existing installations while preserving all local data.
             - **Delete Any Payment or Loan Entry**: Full support for deleting any savings payment, loan repayment, or loan entry with instant balance recalculation.
             - **Working PDF & Excel (.CSV) Export & Share**: In-app preview, native Android Share/Save sheet, Print-to-PDF, and direct file export.
           files: Friends-Savings-Loan-Manager.apk
