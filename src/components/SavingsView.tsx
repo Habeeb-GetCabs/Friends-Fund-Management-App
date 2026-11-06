@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   XCircle,
   Edit3,
+  Trash2,
 } from 'lucide-react';
 import {
   AppDatabaseState,
@@ -15,11 +16,13 @@ import {
 interface SavingsViewProps {
   state: AppDatabaseState;
   onOpenRecordSavings: (memberId?: string, dateISO?: string) => void;
+  onDeleteMemberSavingsOnDate: (memberId: string, dateISO: string) => void;
 }
 
 export const SavingsView: React.FC<SavingsViewProps> = ({
   state,
   onOpenRecordSavings,
+  onDeleteMemberSavingsOnDate,
 }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>(
     state.settings.currentReferenceDate.slice(0, 7)
@@ -227,7 +230,7 @@ export const SavingsView: React.FC<SavingsViewProps> = ({
                 Date Details: {formatDateDDMMYYYY(activeDateISO)}
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                 Paid: {activeDateSummary.paidCount} / {state.members.length} ·
+                Paid: {activeDateSummary.paidCount} / {state.members.length} ·
                 Collected:{' '}
                 {formatINR(
                   activeDateSummary.totalCashCollectedOnDate > 0
@@ -265,12 +268,28 @@ export const SavingsView: React.FC<SavingsViewProps> = ({
                     </span>
                   </div>
 
-                  <div>
+                  <div className="flex items-center gap-2">
                     {isPaid ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 font-mono tabular-nums">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        <span>Paid {formatINR(paidAmt)}</span>
-                      </span>
+                      <>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 font-mono tabular-nums">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Paid {formatINR(paidAmt)}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onDeleteMemberSavingsOnDate(
+                              ms.memberId,
+                              activeDateISO
+                            )
+                          }
+                          aria-label={`Delete payment for ${ms.memberName} on ${formatDateDDMMYYYY(activeDateISO)}`}
+                          className="px-2 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-[11px] font-semibold inline-flex items-center gap-1 min-h-[32px]"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Delete</span>
+                        </button>
+                      </>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-600">
                         <XCircle className="w-4 h-4 text-red-500" />

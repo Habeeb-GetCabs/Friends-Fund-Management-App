@@ -16,6 +16,9 @@ import {
 import {
   AppDatabaseState,
   DailyRegisterEntryInput,
+  deleteLoan,
+  deleteMemberDailySavingsOnDate,
+  deleteTransaction,
   formatDateDDMMYYYY,
   formatINR,
   issueEmergencyLoan,
@@ -29,12 +32,17 @@ import {
   saveDatabaseState,
   validateAndParseBackup,
 } from './domain/storage';
+import {
+  ExportDocumentPayload,
+  subscribeToExports,
+} from './utils/exportUtils';
 import { DashboardView } from './components/DashboardView';
 import { MembersView } from './components/MembersView';
 import { SavingsView } from './components/SavingsView';
 import { LoansView } from './components/LoansView';
 import { ReportsView } from './components/ReportsView';
 import { RecordSavingsModal } from './components/RecordSavingsModal';
+import { ExportPreviewModal } from './components/ExportPreviewModal';
 
 export type NavTab = 'dashboard' | 'members' | 'savings' | 'loans' | 'reports';
 
@@ -57,12 +65,22 @@ export default function App() {
     string | undefined
   >(undefined);
 
+  // Export & Share Modal State (ensures PDF/CSV/JSON exports always work in Android APK WebViews & Browsers)
+  const [exportPayload, setExportPayload] =
+    useState<ExportDocumentPayload | null>(null);
+
   // Feedback banner for completed financial actions
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     saveDatabaseState(state);
   }, [state]);
+
+  useEffect(() => {
+    return subscribeToExports((payload) => {
+      setExportPayload(payload);
+    });
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -94,6 +112,54 @@ export default function App() {
       )} — ${paidEntries.length} / ${
         state.members.length
       } members paid (${formatINR(totalCollected)}).`
+    );
+  };
+
+  const handleDeleteTransaction = (transactionId: string) => {
+    const target = state.transactions.find((t) => t.id === transactionId);
+    const next = deleteTransaction(state, transactionId);
+    setState(next);
+    if (target) {
+      const member = state.members.find((m) => m.id === target.memberId);
+      showToast(
+        `Deleted ${target.category} entry of ${formatINR(target.amount)}${
+          member ? ` for ${member.name}` : ''
+        }. Balances recalculated.`
+      );
+    } else {
+      showToast('Deleted payment entry. Balances recalculated.');
+    }
+  };
+
+  const handleDeleteLoan = (loanId: string) => {
+    const targetLoan = state.loans.find((l) => l.id === loanId);
+    const next = deleteLoan(state, loanId);
+    setState(next);
+    if (targetLoan) {
+      const borrower = state.members.find(
+        (m) => m.id === targetLoan.borrowerId
+      );
+      showToast(
+        `Deleted ${formatINR(targetLoan.principalAmount)} loan${
+          borrower ? ` for ${borrower.name}` : ''
+        }. Available cash and balances updated.`
+      );
+    } else {
+      showToast('Deleted loan entry. Available cash updated.');
+    }
+  };
+
+  const handleDeleteMemberSavingsOnDate = (
+    memberId: string,
+    dateISO: string
+  ) => {
+    const member = state.members.find((m) => m.id === memberId);
+    const next = deleteMemberDailySavingsOnDate(state, memberId, dateISO);
+    setState(next);
+    showToast(
+      `Deleted savings payment for ${
+        member?.name || 'Member'
+      } on ${formatDateDDMMYYYY(dateISO)}.`
     );
   };
 
@@ -182,9 +248,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col pb-20 md:pb-10">
-      {/* STRICT 3-ZONE TOP BAR CONTRACT (APK button completely removed) */}
+      {/* STRICT 3-ZONE TOP BAR CONTRACT */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-8">
-        {/* Zone 1: Single text element wordmark */}
+        {/* Zone 1: Custom App Icon + Brand Wordmark */}
         <a
           href="#dashboard"
           onClick={(e) => {
@@ -192,9 +258,14 @@ export default function App() {
             setActiveTab('dashboard');
             setSelectedMemberId(null);
           }}
-          className="text-sm sm:text-lg font-bold tracking-tight text-slate-900 truncate"
+          className="inline-flex items-center gap-2.5 text-sm sm:text-lg font-bold tracking-tight text-slate-900 truncate"
         >
-          Friends Savings &amp; Loan Manager
+          <img
+            src="/app-icon.png"
+            alt=""
+            className="w-8 h-8 rounded-lg object-cover shrink-0 shadow-2xs"
+          />
+          <span className="truncate">Friends Savings &amp; Loan Manager</span>
         </a>
 
         {/* Zone 2: 5 clean single-line text navigation links */}
@@ -275,6 +346,7 @@ export default function App() {
             }}
             onNavigateTab={setActiveTab}
             onUpdateDailyContribution={handleUpdateDailyContribution}
+            onDeleteMemberSavingsOnDate={handleDeleteMemberSavingsOnDate}
           />
         )}
 
@@ -285,6 +357,7 @@ export default function App() {
             onSelectMember={setSelectedMemberId}
             onRenameMember={handleRenameMember}
             onOpenRecordSavings={handleOpenRecordSavings}
+            onDeleteTransaction={handleDeleteTransaction}
           />
         )}
 
@@ -292,6 +365,7 @@ export default function App() {
           <SavingsView
             state={state}
             onOpenRecordSavings={handleOpenRecordSavings}
+            onDeleteMemberSavingsOnDate={handleDeleteMemberSavingsOnDate}
           />
         )}
 
@@ -300,6 +374,8 @@ export default function App() {
             state={state}
             onIssueLoan={handleIssueLoan}
             onRecordRepayment={handleRecordLoanRepayment}
+            onDeleteLoan={handleDeleteLoan}
+            onDeleteTransaction={handleDeleteTransaction}
           />
         )}
 
@@ -308,6 +384,8 @@ export default function App() {
             state={state}
             onRestoreBackup={handleRestoreBackup}
             onResetToDefaultSeed={handleResetToDefaultSeed}
+            onDeleteTransaction={handleDeleteTransaction}
+            onDeleteLoan={handleDeleteLoan}
           />
         )}
       </main>
@@ -360,6 +438,14 @@ export default function App() {
           initialDateISO={savingsModalDateISO}
           onClose={() => setSavingsModalOpen(false)}
           onSaveCollectionBatch={handleSaveCollectionBatch}
+        />
+      )}
+
+      {/* EXPORT & SHARE MODAL (Android WebView + Desktop PDF/CSV/JSON Support) */}
+      {exportPayload && (
+        <ExportPreviewModal
+          payload={exportPayload}
+          onClose={() => setExportPayload(null)}
         />
       )}
     </div>

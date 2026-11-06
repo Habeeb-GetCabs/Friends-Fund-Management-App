@@ -13,6 +13,9 @@ import {
   editSavingsTransactionWithAudit,
   issueEmergencyLoan,
   recordLoanRepayment,
+  deleteTransaction,
+  deleteLoan,
+  deleteMemberDailySavingsOnDate,
   calculateGroupFinancialSummary,
   formatDateDDMMYYYY,
   AppDatabaseState,
@@ -259,3 +262,59 @@ test('12. Editing member name never deletes historical financial transactions, a
   assert.equal(state.transactions[0].auditTrail.length, 1);
   assert.equal(formatDateDDMMYYYY('2026-11-05'), '05-11-2026');
 });
+
+test('13. Deleting any payment (savings contribution, loan repayment, or loan issuance) recalculates all balances accurately', () => {
+  let state = createCleanTestState();
+
+  // Record two savings payments on 2026-11-05
+  state = saveDailyCollectionBatch(state, {
+    paymentDateISO: '2026-11-05',
+    entries: [
+      { memberId: 'member-1', paid: true, amount: 3000 },
+      { memberId: 'member-2', paid: true, amount: 3000 },
+    ],
+  }).nextState;
+
+  assert.equal(calculateGroupFinancialSummary(state).totalSavingsCollected, 6000);
+
+  // Issue a ₹2,000 loan to member-3 and record a ₹500 repayment
+  state = issueEmergencyLoan(state, {
+    borrowerId: 'member-3',
+    principalAmount: 2000,
+    issueDateISO: '2026-11-05',
+    firstInstalmentDateISO: '2026-11-12',
+    repaymentDurationWeeks: 10,
+  });
+  const loanId = state.loans[0].id;
+  state = recordLoanRepayment(state, {
+    loanId,
+    paymentAmount: 500,
+    paymentDateISO: '2026-11-05',
+  });
+
+  let summary = calculateGroupFinancialSummary(state);
+  assert.equal(summary.totalOutstandingLoanPrincipal, 1500);
+  assert.equal(summary.availableGroupCash, 4500);
+
+  // Delete the ₹500 loan repayment -> loan outstanding returns to ₹2,000 and available cash to ₹4,000
+  const repTxn = state.transactions.find((t) => t.category === 'Loan Repayment')!;
+  state = deleteTransaction(state, repTxn.id);
+  summary = calculateGroupFinancialSummary(state);
+  assert.equal(summary.totalOutstandingLoanPrincipal, 2000);
+  assert.equal(summary.availableGroupCash, 4000);
+  assert.equal(state.loans[0].instalments[0].amountPaid, 0);
+
+  // Delete the ₹2,000 loan -> available cash returns to ₹6,000 and loans count is 0
+  state = deleteLoan(state, loanId);
+  summary = calculateGroupFinancialSummary(state);
+  assert.equal(state.loans.length, 0);
+  assert.equal(summary.totalLoansIssued, 0);
+  assert.equal(summary.availableGroupCash, 6000);
+
+  // Delete member-2's daily savings on 2026-11-05 -> total savings becomes ₹3,000
+  state = deleteMemberDailySavingsOnDate(state, 'member-2', '2026-11-05');
+  summary = calculateGroupFinancialSummary(state);
+  assert.equal(summary.totalSavingsCollected, 3000);
+  assert.equal(summary.availableGroupCash, 3000);
+});
+

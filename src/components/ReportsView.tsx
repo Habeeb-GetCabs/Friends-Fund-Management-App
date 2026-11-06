@@ -6,6 +6,7 @@ import {
   Upload,
   CheckCircle2,
   AlertCircle,
+  Trash2,
 } from 'lucide-react';
 import {
   AppDatabaseState,
@@ -37,12 +38,15 @@ interface ReportsViewProps {
   state: AppDatabaseState;
   onRestoreBackup: (jsonContent: string) => void;
   onResetToDefaultSeed: () => void;
+  onDeleteTransaction: (transactionId: string) => void;
+  onDeleteLoan: (loanId: string) => void;
 }
 
 export const ReportsView: React.FC<ReportsViewProps> = ({
   state,
   onRestoreBackup,
-  onResetToDefaultSeed,
+  onDeleteTransaction,
+  onDeleteLoan,
 }) => {
   const [activeReport, setActiveReport] = useState<ReportType>('daily');
   const [reportDate, setReportDate] = useState<string>(
@@ -502,31 +506,58 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     {h}
                   </th>
                 ))}
+                {(activeReport === 'member' ||
+                  activeReport === 'loan-repayment' ||
+                  activeReport === 'outstanding-loan' ||
+                  activeReport === 'group-statement') && (
+                  <th className="py-3 px-3 text-right">Action</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200/70 text-xs sm:text-sm">
               {currentReport.rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={currentReport.headers.length}
+                    colSpan={currentReport.headers.length + 1}
                     className="py-8 text-center text-slate-500"
                   >
                     No matching records for this report period.
                   </td>
                 </tr>
               ) : (
-                currentReport.rows.slice(0, 80).map((row, rIdx) => (
-                  <tr key={rIdx} className="hover:bg-slate-50">
-                    {row.map((cell, cIdx) => (
-                      <td
-                        key={cIdx}
-                        className="py-2.5 px-3 font-mono tabular-nums text-slate-800"
-                      >
-                        {cell}
-                      </td>
-                    ))}
-                  </tr>
-                ))
+                currentReport.rows.slice(0, 80).map((row, rIdx) => {
+                  const firstCell = String(row[0] || '');
+                  const isTxnRow = firstCell.startsWith('TXN-');
+                  const isLoanRow = firstCell.startsWith('LOAN-');
+
+                  return (
+                    <tr key={rIdx} className="hover:bg-slate-50">
+                      {row.map((cell, cIdx) => (
+                        <td
+                          key={cIdx}
+                          className="py-2.5 px-3 font-mono tabular-nums text-slate-800"
+                        >
+                          {cell}
+                        </td>
+                      ))}
+                      {(isTxnRow || isLoanRow) && (
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isTxnRow) onDeleteTransaction(firstCell);
+                              if (isLoanRow) onDeleteLoan(firstCell);
+                            }}
+                            className="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold inline-flex items-center gap-1 min-h-[30px]"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Delete</span>
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

@@ -37,7 +37,7 @@ jobs:
             const pkg = {
               name: "friends-savings-loan-manager",
               private: true,
-              version: "1.0.0",
+              version: "2.0.0",
               type: "module",
               scripts: {
                 dev: "vite",
@@ -79,7 +79,55 @@ jobs:
           fi
           npx cap sync android
 
-      - name: 7. Compile Installable Android APK via Gradle
+      - name: 7. Apply Custom App Icon & Auto-Incrementing Version for Seamless App Updates
+        run: |
+          # 1. Install consistent signing certificate into ~/.android/debug.keystore
+          # so every APK build shares the exact same signature and updates cleanly over the installed app
+          mkdir -p ~/.android
+          rm -f ~/.android/debug.keystore
+          if [ -f "android-keystore/friends-savings.p12.b64" ]; then
+            base64 -d android-keystore/friends-savings.p12.b64 > /tmp/friends-savings.p12
+            keytool -importkeystore \
+              -srckeystore /tmp/friends-savings.p12 \
+              -srcstoretype PKCS12 \
+              -srcstorepass friendsfund123 \
+              -srcalias friendsfundkey \
+              -destkeystore ~/.android/debug.keystore \
+              -deststoretype PKCS12 \
+              -deststorepass android \
+              -destkeypass android \
+              -destalias androiddebugkey \
+              -noprompt
+          fi
+
+          # 2. Auto-increment versionCode and versionName in android/app/build.gradle
+          # so Android always recognizes new builds as an in-place upgrade over the previous version
+          BUILD_VER_CODE=$((100 + ${{ github.run_number }}))
+          BUILD_VER_NAME="2.0.${{ github.run_number }}"
+          node -e '
+            const fs = require("fs");
+            const gradlePath = "android/app/build.gradle";
+            if (fs.existsSync(gradlePath)) {
+              let content = fs.readFileSync(gradlePath, "utf8");
+              content = content.replace(/versionCode\s+\d+/, "versionCode " + process.env.BUILD_VER_CODE);
+              content = content.replace(/versionName\s+"[^"]+"/, "versionName \"" + process.env.BUILD_VER_NAME + "\"");
+              fs.writeFileSync(gradlePath, content);
+            }
+          ' BUILD_VER_CODE="$BUILD_VER_CODE" BUILD_VER_NAME="$BUILD_VER_NAME"
+
+          # 3. Inject custom Friends Savings & Loan Manager launcher icon into all Android mipmap directories
+          if [ -f "public/pwa-512x512.png" ]; then
+            rm -rf android/app/src/main/res/mipmap-anydpi-v26
+            for dir in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+              target="android/app/src/main/res/$dir"
+              mkdir -p "$target"
+              cp public/pwa-512x512.png "$target/ic_launcher.png"
+              cp public/pwa-512x512.png "$target/ic_launcher_round.png"
+              cp public/pwa-512x512.png "$target/ic_launcher_foreground.png"
+            done
+          fi
+
+      - name: 8. Compile Installable Android APK via Gradle
         working-directory: ./android
         run: |
           chmod +x gradlew
@@ -87,7 +135,7 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk ../Friends-Savings-Loan-Manager.apk
           ls -lh ../Friends-Savings-Loan-Manager.apk
 
-      - name: 8. Upload APK to GitHub Actions Artifacts
+      - name: 9. Upload APK to GitHub Actions Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Friends-Savings-Loan-Manager-APK
@@ -95,22 +143,17 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: 9. Publish APK to GitHub Releases
+      - name: 10. Publish APK to GitHub Releases
         continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: "Friends Savings & Loan Manager APK (Build #${{ github.run_number }})"
+          tag_name: v2.0.${{ github.run_number }}
+          name: "Friends Savings & Loan Manager APK v2.0.${{ github.run_number }}"
           body: |
-            ### Friends Savings & Interest-Free Loan Manager (Android APK)
-            - **7 Preconfigured Members**: Sathish, Kumar, Santhosh, Prakash, Ranjth, Basheer, Mahalakshmi
-            - **Daily Savings System**: Default ₹100/day (₹700 group daily target), partial/missed/advance allocation & audit trail
-            - **Interest-Free Emergency Loans**: 10-week repayment tracker (0% interest)
-            - **100% Offline-First**: Runs completely offline on Android with local database persistence, JSON backup/restore, and PDF/CSV exports.
-
-            **How to install on Android:**
-            1. Download `Friends-Savings-Loan-Manager.apk` below.
-            2. Open the downloaded file on your Android phone and tap **Install**.
+            ### Friends Savings & Interest-Free Loan Manager (Android APK v2.0.${{ github.run_number }})
+            - **Custom App Icon & Consistent Update Signature**: Updates directly over existing v2+ installations while preserving all local data. *(Note: If you have the very first test build installed that used a temporary runner key, uninstall that old copy once before installing this signed v2 APK; all future updates will install directly over this app without uninstalling.)*
+            - **Delete Any Payment or Loan Entry**: Full support for deleting any savings payment, loan repayment, or loan entry with instant balance recalculation.
+            - **Working PDF & Excel (.CSV) Export & Share**: In-app preview, native Android Share/Save sheet, Print-to-PDF, and direct file export.
           files: Friends-Savings-Loan-Manager.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

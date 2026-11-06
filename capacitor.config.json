@@ -1,5 +1,5 @@
 {
-  "appId": "com.friendsfund.savingsmanager",
+  "appId": "com.friendsfund.manager",
   "appName": "Friends Savings & Loan Manager",
   "webDir": "dist",
   "server": {

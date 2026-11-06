@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   XCircle,
+  Trash2,
 } from 'lucide-react';
 import {
   AppDatabaseState,
@@ -28,6 +29,7 @@ interface MembersViewProps {
   onSelectMember: (memberId: string | null) => void;
   onRenameMember: (memberId: string, newName: string) => void;
   onOpenRecordSavings: (memberId: string, dateISO?: string) => void;
+  onDeleteTransaction: (transactionId: string) => void;
 }
 
 export const MembersView: React.FC<MembersViewProps> = ({
@@ -36,6 +38,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
   onSelectMember,
   onRenameMember,
   onOpenRecordSavings,
+  onDeleteTransaction,
 }) => {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [editingNameValue, setEditingNameValue] = useState('');
@@ -275,6 +278,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
                       <th className="py-2.5 px-3">Category</th>
                       <th className="py-2.5 px-3">Details</th>
                       <th className="py-2.5 px-3 text-right">Amount</th>
+                      <th className="py-2.5 px-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200/70 text-sm">
@@ -291,6 +295,17 @@ export const MembersView: React.FC<MembersViewProps> = ({
                         </td>
                         <td className="py-3 px-3 text-right font-mono tabular-nums font-bold text-slate-900">
                           {formatINR(txn.amount)}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => onDeleteTransaction(txn.id)}
+                            aria-label={`Delete ${txn.category} transaction of ${formatINR(txn.amount)}`}
+                            className="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold inline-flex items-center gap-1 min-h-[32px]"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </button>
                         </td>
                       </tr>
                     ))}

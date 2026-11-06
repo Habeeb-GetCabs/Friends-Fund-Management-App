@@ -5,6 +5,7 @@ import {
   PlusCircle,
   HandCoins,
   Settings,
+  Trash2,
 } from 'lucide-react';
 import {
   AppDatabaseState,
@@ -24,6 +25,7 @@ interface DashboardViewProps {
     tab: 'dashboard' | 'members' | 'savings' | 'loans' | 'reports'
   ) => void;
   onUpdateDailyContribution: (newAmount: number) => void;
+  onDeleteMemberSavingsOnDate: (memberId: string, dateISO: string) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -33,6 +35,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenMemberProfile,
   onNavigateTab,
   onUpdateDailyContribution,
+  onDeleteMemberSavingsOnDate,
 }) => {
   const [showSettings, setShowSettings] = useState(false);
   const [rateInput, setRateInput] = useState(
@@ -272,12 +275,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </button>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2.5">
                   {isPaidToday ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 font-mono tabular-nums">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>Paid ({formatINR(amountToday)})</span>
-                    </span>
+                    <>
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 font-mono tabular-nums">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Paid ({formatINR(amountToday)})</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onDeleteMemberSavingsOnDate(ms.memberId, todayISO)
+                        }
+                        aria-label={`Delete today's payment for ${ms.memberName}`}
+                        title="Delete payment entry"
+                        className="px-2 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-[11px] font-semibold inline-flex items-center gap-1 min-h-[32px]"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Delete</span>
+                      </button>
+                    </>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-600">
                       <XCircle className="w-4 h-4 text-red-500 shrink-0" />

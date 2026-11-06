@@ -274,10 +274,18 @@ export const RecordSavingsModal: React.FC<RecordSavingsModalProps> = ({
                     </div>
 
                     {row.alreadyPaidAmount > 0 && !isEditedExisting && (
-                      <div className="pb-1 pl-8 text-[11px] text-emerald-700 font-medium">
-                        Recorded {formatINR(row.alreadyPaidAmount)} on{' '}
-                        {formatDateDDMMYYYY(paymentDate)}. Edit amount to
-                        correct.
+                      <div className="pb-1 pl-8 flex items-center justify-between gap-2 text-[11px] text-emerald-700 font-medium">
+                        <span>
+                          Recorded {formatINR(row.alreadyPaidAmount)} on{' '}
+                          {formatDateDDMMYYYY(paymentDate)}.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePaid(row.memberId)}
+                          className="text-red-600 hover:underline font-semibold"
+                        >
+                          Remove / Delete
+                        </button>
                       </div>
                     )}
 

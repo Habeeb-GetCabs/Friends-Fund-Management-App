@@ -953,31 +953,11 @@ export function saveDailyCollectionBatch(
     const existingTotal = existingTxnsForDate.reduce((s, t) => s + t.amount, 0);
 
     if (!entry.paid) {
-      // If member was previously paid on this date and treasurer unchecked them (corrected to ₹0):
+      // If member was previously paid on this date and treasurer unchecked them, delete their payment for this date:
       if (existingTxnsForDate.length > 0 && existingTotal > 0) {
-        const primaryTxn = existingTxnsForDate[0];
-        const reason =
-          entry.correctionReason?.trim() ||
-          `Marked unpaid on ${formatDateDDMMYYYY(paymentDateISO)} via Daily Collection Register`;
-        const auditEntry: AuditEntry = {
-          id: `AUD-${Date.now()}-${member.id}`,
-          originalAmount: primaryTxn.amount,
-          correctedAmount: 0,
-          correctionDate: state.settings.currentReferenceDate,
-          reason,
-          previousAllocations: primaryTxn.savingsAllocations,
-          correctedAllocations: [{ targetDate: paymentDateISO, amount: 0 }],
-        };
-        updatedTransactions = updatedTransactions.map((t) =>
-          t.id === primaryTxn.id
-            ? {
-                ...t,
-                amount: 0,
-                savingsAllocations: [{ targetDate: paymentDateISO, amount: 0 }],
-                description: `Daily savings corrected to ₹0 (${reason})`,
-                auditTrail: [...t.auditTrail, auditEntry],
-              }
-            : t
+        const idsToRemove = new Set(existingTxnsForDate.map((t) => t.id));
+        updatedTransactions = updatedTransactions.filter(
+          (t) => !idsToRemove.has(t.id)
         );
         updatedCount++;
       }
@@ -1303,3 +1283,119 @@ export function recordLoanRepayment(
     lastUpdated: nowTimestamp,
   };
 }
+
+/**
+ * Deletes any financial transaction (Daily Savings, Loan Repayment, Loan Disbursement, etc.)
+ * and automatically recomputes all member savings balances, loan schedules, and available group cash.
+ */
+export function deleteTransaction(
+  state: AppDatabaseState,
+  transactionId: string
+): AppDatabaseState {
+  const targetTxn = state.transactions.find((t) => t.id === transactionId);
+  if (!targetTxn) {
+    return state;
+  }
+
+  // If deleting a Loan Disbursement transaction, delete the entire loan and its associated transactions
+  if (targetTxn.category === 'Loan Disbursement' && targetTxn.loanId) {
+    return deleteLoan(state, targetTxn.loanId);
+  }
+
+  const nextTransactions = state.transactions.filter(
+    (t) => t.id !== transactionId
+  );
+  const nextLoans = state.loans.map((l) =>
+    recomputeLoanState(l, nextTransactions, state.settings.currentReferenceDate)
+  );
+
+  return {
+    ...state,
+    transactions: nextTransactions,
+    loans: nextLoans,
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+/**
+ * Deletes an emergency loan and all of its associated disbursement and repayment transactions,
+ * restoring available group cash and member balances.
+ */
+export function deleteLoan(
+  state: AppDatabaseState,
+  loanId: string
+): AppDatabaseState {
+  const nextLoans = state.loans.filter((l) => l.id !== loanId);
+  const nextTransactions = state.transactions.filter(
+    (t) =>
+      t.loanId !== loanId &&
+      !(
+        t.instalmentAllocations &&
+        t.instalmentAllocations.some((a) => a.loanId === loanId)
+      )
+  );
+
+  return {
+    ...state,
+    loans: nextLoans.map((l) =>
+      recomputeLoanState(l, nextTransactions, state.settings.currentReferenceDate)
+    ),
+    transactions: nextTransactions,
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+/**
+ * Deletes a member's daily savings payment for a specific date.
+ */
+export function deleteMemberDailySavingsOnDate(
+  state: AppDatabaseState,
+  memberId: string,
+  dateISO: string
+): AppDatabaseState {
+  const nextTransactions: FinancialTransaction[] = [];
+
+  for (const txn of state.transactions) {
+    if (
+      txn.memberId !== memberId ||
+      (txn.category !== 'Daily Savings' && txn.category !== 'Savings Correction')
+    ) {
+      nextTransactions.push(txn);
+      continue;
+    }
+
+    const allocs = txn.savingsAllocations || [
+      { targetDate: txn.transactionDate, amount: txn.amount },
+    ];
+    const hasDateAlloc = allocs.some((a) => a.targetDate === dateISO);
+
+    if (txn.transactionDate === dateISO && allocs.length <= 1) {
+      // Remove this transaction completely
+      continue;
+    }
+
+    if (hasDateAlloc) {
+      const remainingAllocs = allocs.filter((a) => a.targetDate !== dateISO);
+      const remainingSum = remainingAllocs.reduce((s, a) => s + a.amount, 0);
+      if (remainingAllocs.length === 0 || remainingSum <= 0) {
+        // Remove completely
+        continue;
+      }
+      nextTransactions.push({
+        ...txn,
+        amount: remainingSum,
+        savingsAllocations: remainingAllocs,
+      });
+      continue;
+    }
+
+    nextTransactions.push(txn);
+  }
+
+  return {
+    ...state,
+    transactions: nextTransactions,
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
