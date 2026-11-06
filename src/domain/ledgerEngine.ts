@@ -22,7 +22,7 @@ export interface Member {
 }
 
 export interface SavingsAllocation {
-  targetDate: string; // ISO YYYY-MM-DD for which savings day this amount covers
+  targetDate: string; // ISO YYYY-MM-DD
   amount: number;
 }
 
@@ -38,7 +38,7 @@ export interface AuditEntry {
 
 export interface InstalmentAllocation {
   loanId: string;
-  instalmentNumber: number; // 1..10
+  instalmentNumber: number;
   amount: number;
 }
 
@@ -51,13 +51,9 @@ export interface FinancialTransaction {
   createdAt: string; // ISO timestamp
   description?: string;
   notes?: string;
-  // For Daily Savings & Savings Correction:
   savingsAllocations?: SavingsAllocation[];
-  // For Loan Disbursement:
   loanId?: string;
-  // For Loan Repayment:
   instalmentAllocations?: InstalmentAllocation[];
-  // For Savings Correction / Refund:
   relatedTransactionId?: string;
   auditTrail: AuditEntry[];
 }
@@ -70,7 +66,7 @@ export interface LoanInstalmentPayment {
 }
 
 export interface LoanInstalment {
-  instalmentNumber: number; // 1..10
+  instalmentNumber: number;
   dueDate: string; // ISO YYYY-MM-DD
   expectedAmount: number;
   amountPaid: number;
@@ -87,8 +83,8 @@ export interface EmergencyLoan {
   principalAmount: number;
   issueDate: string; // ISO YYYY-MM-DD
   firstInstalmentDate: string; // ISO YYYY-MM-DD
-  repaymentDurationWeeks: 10;
-  numberOfInstalments: 10;
+  repaymentDurationWeeks: number; // default 10
+  numberOfInstalments: number; // default 10
   interestRate: 0;
   totalRepayment: number;
   weeklyInstalmentAmount: number;
@@ -99,7 +95,7 @@ export interface EmergencyLoan {
 
 export interface AppSettings {
   groupName: string;
-  dailyContributionAmount: number; // Default ₹100
+  dailyContributionAmount: number; // Configurable in settings (e.g. ₹100)
   groupStartDate: string; // ISO YYYY-MM-DD
   currentReferenceDate: string; // ISO YYYY-MM-DD
   autoAllocateExtraPayments: boolean;
@@ -126,9 +122,14 @@ export const DEFAULT_MEMBER_NAMES: readonly string[] = [
 
 export const DEFAULT_DAILY_CONTRIBUTION = 100;
 
-/**
- * Date formatting utilities (DD-MM-YYYY <-> YYYY-MM-DD)
- */
+export function getTodayISO(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export function formatDateDDMMYYYY(isoDate: string | null | undefined): string {
   if (!isoDate) return '—';
   const clean = isoDate.trim().slice(0, 10);
@@ -147,7 +148,7 @@ export function parseDDMMYYYYToISO(ddmmyyyy: string): string {
     throw new Error(`Invalid date format: ${ddmmyyyy}. Expected DD-MM-YYYY.`);
   }
   if (parts[0].length === 4) {
-    return clean; // Already YYYY-MM-DD
+    return clean;
   }
   const [dd, mm, yyyy] = parts;
   return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
@@ -186,10 +187,7 @@ export function formatINR(amount: number): string {
   return `${isNegative ? '-' : ''}₹${formatted}`;
 }
 
-/**
- * Generates initial 7 members without requiring registration
- */
-export function createDefaultMembers(startDateISO = '2026-11-01'): Member[] {
+export function createDefaultMembers(startDateISO: string = getTodayISO()): Member[] {
   return DEFAULT_MEMBER_NAMES.map((name, idx) => ({
     id: `member-${idx + 1}`,
     name,
@@ -198,9 +196,6 @@ export function createDefaultMembers(startDateISO = '2026-11-01'): Member[] {
   }));
 }
 
-/**
- * Edits a member's name while preserving their ID and all historical transactions
- */
 export function renameMember(
   state: AppDatabaseState,
   memberId: string,
@@ -238,25 +233,25 @@ export function renameMember(
 }
 
 /**
- * Calculates the 10 weekly instalments for an interest-free loan.
- * Weekly instalment = Principal / 10.
- * If the amount cannot be divided evenly, distributes the rounding remainder across the first instalments
- * so the sum of all 10 instalments equals the exact principal.
+ * Generates weekly instalments for an interest-free loan (default 10 weeks).
+ * Distributes any rounding remainder across the earliest weeks so total equals exact principal.
  */
-export function generateTenWeeklyInstalments(
+export function generateWeeklyInstalments(
   principalAmount: number,
   firstInstalmentDateISO: string,
-  referenceDateISO: string
+  referenceDateISO: string,
+  durationWeeks = 10
 ): LoanInstalment[] {
   if (!Number.isFinite(principalAmount) || principalAmount <= 0) {
     throw new Error('Principal amount must be greater than ₹0.');
   }
+  const weeks = Math.max(1, Math.round(durationWeeks));
   const roundedPrincipal = Math.round(principalAmount);
-  const baseInstalment = Math.floor(roundedPrincipal / 10);
-  const remainder = roundedPrincipal - baseInstalment * 10;
+  const baseInstalment = Math.floor(roundedPrincipal / weeks);
+  const remainder = roundedPrincipal - baseInstalment * weeks;
 
   const instalments: LoanInstalment[] = [];
-  for (let i = 1; i <= 10; i++) {
+  for (let i = 1; i <= weeks; i++) {
     const expectedAmount = i <= remainder ? baseInstalment + 1 : baseInstalment;
     const dueDate = addDaysISO(firstInstalmentDateISO, (i - 1) * 7);
     const isOverdue = dueDate < referenceDateISO;
@@ -275,46 +270,86 @@ export function generateTenWeeklyInstalments(
   return instalments;
 }
 
+export function generateTenWeeklyInstalments(
+  principalAmount: number,
+  firstInstalmentDateISO: string,
+  referenceDateISO: string
+): LoanInstalment[] {
+  return generateWeeklyInstalments(
+    principalAmount,
+    firstInstalmentDateISO,
+    referenceDateISO,
+    10
+  );
+}
+
 /**
- * Recomputes all loan instalment states from the transaction ledger
+ * Recomputes a loan's weekly repayment schedule from actual Loan Repayment transactions.
+ * Automatically allocates repayments sequentially against outstanding principal from Week 1..N.
  */
 export function recomputeLoanState(
   loan: EmergencyLoan,
   transactions: FinancialTransaction[],
   referenceDateISO: string
 ): EmergencyLoan {
-  const baseInstalments = generateTenWeeklyInstalments(
+  const weeks = loan.repaymentDurationWeeks || loan.numberOfInstalments || 10;
+  const baseInstalments = generateWeeklyInstalments(
     loan.principalAmount,
     loan.firstInstalmentDate,
-    referenceDateISO
+    referenceDateISO,
+    weeks
   );
 
-  // Gather all Loan Repayment transactions for this loan
+  // Find all Loan Repayment transactions for this loan sorted chronologically
   const repaymentTxns = transactions
     .filter(
       (t) =>
         t.category === 'Loan Repayment' &&
-        t.instalmentAllocations &&
-        t.instalmentAllocations.some((a) => a.loanId === loan.id)
+        (t.loanId === loan.id ||
+          (t.instalmentAllocations &&
+            t.instalmentAllocations.some((a) => a.loanId === loan.id)))
     )
-    .sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
+    .sort((a, b) => {
+      const dateCmp = a.transactionDate.localeCompare(b.transactionDate);
+      if (dateCmp !== 0) return dateCmp;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
 
   for (const txn of repaymentTxns) {
-    if (!txn.instalmentAllocations) continue;
-    for (const alloc of txn.instalmentAllocations) {
-      if (alloc.loanId !== loan.id || alloc.amount <= 0) continue;
-      const inst = baseInstalments.find(
-        (item) => item.instalmentNumber === alloc.instalmentNumber
-      );
-      if (inst) {
-        inst.amountPaid += alloc.amount;
+    if (txn.instalmentAllocations && txn.instalmentAllocations.length > 0) {
+      for (const alloc of txn.instalmentAllocations) {
+        if (alloc.loanId !== loan.id || alloc.amount <= 0) continue;
+        const inst = baseInstalments.find(
+          (item) => item.instalmentNumber === alloc.instalmentNumber
+        );
+        if (inst) {
+          inst.amountPaid += alloc.amount;
+          inst.actualPaymentDate = txn.transactionDate;
+          inst.payments.push({
+            transactionId: txn.id,
+            amount: alloc.amount,
+            paymentDate: txn.transactionDate,
+            notes: txn.notes || txn.description,
+          });
+        }
+      }
+    } else {
+      // Automatic sequential allocation against earliest unpaid weeks
+      let remToAllocate = txn.amount;
+      for (const inst of baseInstalments) {
+        if (remToAllocate <= 0) break;
+        const stillNeeded = Math.max(0, inst.expectedAmount - inst.amountPaid);
+        if (stillNeeded <= 0) continue;
+        const take = Math.min(remToAllocate, stillNeeded);
+        inst.amountPaid += take;
         inst.actualPaymentDate = txn.transactionDate;
         inst.payments.push({
           transactionId: txn.id,
-          amount: alloc.amount,
+          amount: take,
           paymentDate: txn.transactionDate,
           notes: txn.notes || txn.description,
         });
+        remToAllocate -= take;
       }
     }
   }
@@ -336,13 +371,12 @@ export function recomputeLoanState(
 
   return {
     ...loan,
+    repaymentDurationWeeks: weeks,
+    numberOfInstalments: weeks,
     instalments: baseInstalments,
   };
 }
 
-/**
- * Computes proposed instalment allocations when a borrower pays a lump sum (e.g., ₹1,000 across two ₹500 instalments, or partial ₹250)
- */
 export function proposeLoanRepaymentAllocations(
   loan: EmergencyLoan,
   paymentAmount: number,
@@ -378,9 +412,6 @@ export function proposeLoanRepaymentAllocations(
   return allocations;
 }
 
-/**
- * Computes member-specific daily savings allocations map: targetDate -> { totalAllocated, paidInAdvance, transactions }
- */
 export interface MemberDateSavingsSummary {
   memberId: string;
   memberName: string;
@@ -391,6 +422,7 @@ export interface MemberDateSavingsSummary {
   pendingAmount: number;
   status: PaymentStatus;
   paidViaAdvanceOrCarryover: boolean;
+  primaryTransactionId?: string;
   coveringTransactions: Array<{
     transactionId: string;
     paymentDate: string;
@@ -410,6 +442,7 @@ export function getMemberSavingsForDate(
   let allocatedAmount = 0;
   let cashPaidOnDate = 0;
   let hasEarlyOrFutureAdvance = false;
+  let primaryTransactionId: string | undefined;
   const coveringTransactions: MemberDateSavingsSummary['coveringTransactions'] = [];
 
   for (const txn of state.transactions) {
@@ -421,6 +454,9 @@ export function getMemberSavingsForDate(
       ];
       if (txn.transactionDate === targetDateISO) {
         cashPaidOnDate += txn.amount;
+        if (!primaryTransactionId) {
+          primaryTransactionId = txn.id;
+        }
         if (allocs.some((a) => a.targetDate > targetDateISO && a.amount > 0)) {
           hasEarlyOrFutureAdvance = true;
         }
@@ -428,6 +464,9 @@ export function getMemberSavingsForDate(
       for (const alloc of allocs) {
         if (alloc.targetDate === targetDateISO && alloc.amount !== 0) {
           allocatedAmount += alloc.amount;
+          if (!primaryTransactionId) {
+            primaryTransactionId = txn.id;
+          }
           if (txn.transactionDate < targetDateISO) {
             hasEarlyOrFutureAdvance = true;
           }
@@ -463,7 +502,7 @@ export function getMemberSavingsForDate(
     (allocatedAmount >= expectedAmount && hasEarlyOrFutureAdvance)
   ) {
     status = 'Advance';
-  } else if (allocatedAmount === expectedAmount) {
+  } else if (allocatedAmount === expectedAmount && expectedAmount > 0) {
     status = 'Paid';
   } else if (allocatedAmount > 0 && allocatedAmount < expectedAmount) {
     status = 'Partially Paid';
@@ -481,6 +520,7 @@ export function getMemberSavingsForDate(
     pendingAmount,
     status,
     paidViaAdvanceOrCarryover: hasEarlyOrFutureAdvance,
+    primaryTransactionId,
     coveringTransactions,
   };
 }
@@ -520,11 +560,11 @@ export function getDailyCollectionDashboard(
     0
   );
 
-  // Number of members who paid (includes Paid and Advance)
+  // In the simplified collection register, any member who contributed > ₹0 for the date is counted as having paid
   const paidCount = memberStatuses.filter(
-    (m) => m.status === 'Paid' || m.status === 'Advance'
+    (m) => m.allocatedAmount > 0 || m.cashPaidOnDate > 0
   ).length;
-  const missedCount = memberStatuses.filter((m) => m.status === 'Missed').length;
+  const missedCount = state.members.length - paidCount;
   const partiallyPaidCount = memberStatuses.filter(
     (m) => m.status === 'Partially Paid'
   ).length;
@@ -546,9 +586,6 @@ export function getDailyCollectionDashboard(
   };
 }
 
-/**
- * Finds all missed or partially paid dates for a member from groupStartDate up to upToDateISO
- */
 export function getMemberPendingDates(
   state: AppDatabaseState,
   memberId: string,
@@ -565,13 +602,6 @@ export function getMemberPendingDates(
   return pendingList;
 }
 
-/**
- * Smart allocation helper for Daily Savings:
- * Given a payment amount on paymentDateISO:
- * - If mode === 'single-date': allocates the entire amount to paymentDateISO.
- * - If mode === 'cover-missed-then-current': allocates first to oldest missed/partial dates up to paymentDateISO,
- *   then to paymentDateISO, and if surplus remains and allocateAdvance === true, to subsequent future dates!
- */
 export function buildSavingsAllocations(
   state: AppDatabaseState,
   memberId: string,
@@ -603,7 +633,6 @@ export function buildSavingsAllocations(
       }
     }
     if (remaining > 0) {
-      // Attach any leftover to the last target date or paymentDateISO
       const fallbackDate =
         specificTargetDates[specificTargetDates.length - 1] || paymentDateISO;
       const existingAlloc = allocations.find((a) => a.targetDate === fallbackDate);
@@ -617,7 +646,6 @@ export function buildSavingsAllocations(
   }
 
   if (mode === 'cover-missed-then-current') {
-    // Check all dates from groupStartDate up to paymentDateISO that have pending > 0
     const pendingDates = getMemberPendingDates(state, memberId, paymentDateISO);
     for (const daySummary of pendingDates) {
       if (remaining <= 0) break;
@@ -629,7 +657,6 @@ export function buildSavingsAllocations(
     }
   }
 
-  // If there's still remaining amount, allocate to future dates starting after paymentDateISO
   if (remaining > 0) {
     let futureCursor =
       mode === 'advance-future'
@@ -651,13 +678,6 @@ export function buildSavingsAllocations(
   return allocations;
 }
 
-/**
- * Group Financial Summary Calculations
- * IMPORTANT:
- * Available cash = Actual savings collected + Loan repayments received - Loans issued.
- * Never count outstanding loan principal as available cash.
- * Never mix savings contributions with loan repayments.
- */
 export interface GroupFinancialSummary {
   totalSavingsCollected: number;
   totalLoansIssued: number;
@@ -795,9 +815,6 @@ export function calculateGroupFinancialSummary(
   };
 }
 
-/**
- * Records a new Daily Savings contribution with duplicate-tap protection
- */
 export function recordDailySavingsTransaction(
   state: AppDatabaseState,
   params: {
@@ -828,7 +845,6 @@ export function recordDailySavingsTransaction(
     throw new Error('Selected member does not exist.');
   }
 
-  // Prevent accidental double tap within 2.5 seconds with identical parameters
   const recentDuplicate = state.transactions.find((t) => {
     if (
       t.memberId !== memberId ||
@@ -871,9 +887,7 @@ export function recordDailySavingsTransaction(
     createdAt: nowTimestamp,
     description:
       description ||
-      `Daily savings contribution (${finalAllocations
-        .map((a) => `${formatDateDDMMYYYY(a.targetDate)}: ${formatINR(a.amount)}`)
-        .join(', ')})`,
+      `Daily savings contribution (${formatDateDDMMYYYY(transactionDate)}: ${formatINR(amount)})`,
     notes: notes || '',
     savingsAllocations: finalAllocations,
     auditTrail: [],
@@ -887,8 +901,174 @@ export function recordDailySavingsTransaction(
 }
 
 /**
- * Corrects an existing Daily Savings transaction while preserving a complete audit trail
+ * Batch saves the simplified Daily Collection Register for a selected payment date.
+ * - Saves transactions only for selected (checked) members.
+ * - Never creates duplicate daily payment records for a member who already paid on that date.
+ * - If an already-paid member's amount is edited, records a proper AuditEntry on the existing transaction.
  */
+export interface DailyRegisterEntryInput {
+  memberId: string;
+  paid: boolean;
+  amount: number;
+  correctionReason?: string;
+}
+
+export function saveDailyCollectionBatch(
+  state: AppDatabaseState,
+  params: {
+    paymentDateISO: string;
+    entries: DailyRegisterEntryInput[];
+    nowTimestamp?: string;
+  }
+): { nextState: AppDatabaseState; savedCount: number; updatedCount: number } {
+  const {
+    paymentDateISO,
+    entries,
+    nowTimestamp = new Date().toISOString(),
+  } = params;
+
+  if (!paymentDateISO) {
+    throw new Error('Please select a valid payment date.');
+  }
+
+  let updatedTransactions = [...state.transactions];
+  let savedCount = 0;
+  let updatedCount = 0;
+
+  for (const entry of entries) {
+    const member = state.members.find((m) => m.id === entry.memberId);
+    if (!member) continue;
+
+    // Check if member already has a Daily Savings transaction for this date
+    const existingTxnsForDate = updatedTransactions.filter(
+      (t) =>
+        t.memberId === entry.memberId &&
+        (t.category === 'Daily Savings' || t.category === 'Savings Correction') &&
+        (t.transactionDate === paymentDateISO ||
+          (t.savingsAllocations &&
+            t.savingsAllocations.length === 1 &&
+            t.savingsAllocations[0].targetDate === paymentDateISO))
+    );
+
+    const existingTotal = existingTxnsForDate.reduce((s, t) => s + t.amount, 0);
+
+    if (!entry.paid) {
+      // If member was previously paid on this date and treasurer unchecked them (corrected to ₹0):
+      if (existingTxnsForDate.length > 0 && existingTotal > 0) {
+        const primaryTxn = existingTxnsForDate[0];
+        const reason =
+          entry.correctionReason?.trim() ||
+          `Marked unpaid on ${formatDateDDMMYYYY(paymentDateISO)} via Daily Collection Register`;
+        const auditEntry: AuditEntry = {
+          id: `AUD-${Date.now()}-${member.id}`,
+          originalAmount: primaryTxn.amount,
+          correctedAmount: 0,
+          correctionDate: state.settings.currentReferenceDate,
+          reason,
+          previousAllocations: primaryTxn.savingsAllocations,
+          correctedAllocations: [{ targetDate: paymentDateISO, amount: 0 }],
+        };
+        updatedTransactions = updatedTransactions.map((t) =>
+          t.id === primaryTxn.id
+            ? {
+                ...t,
+                amount: 0,
+                savingsAllocations: [{ targetDate: paymentDateISO, amount: 0 }],
+                description: `Daily savings corrected to ₹0 (${reason})`,
+                auditTrail: [...t.auditTrail, auditEntry],
+              }
+            : t
+        );
+        updatedCount++;
+      }
+      continue;
+    }
+
+    // Member is marked as [x] Paid: validate actual amount received
+    if (!Number.isFinite(entry.amount) || entry.amount <= 0) {
+      throw new Error(
+        `Please enter the actual payment amount received for ${member.name}.`
+      );
+    }
+
+    const roundedAmt = Math.round(entry.amount);
+
+    if (existingTxnsForDate.length > 0) {
+      // Never create duplicate daily payment records!
+      if (Math.round(existingTotal) === roundedAmt) {
+        // Unchanged existing payment — skip
+        continue;
+      }
+      // Amount was edited by the treasurer: update primary transaction with audit trail
+      const primaryTxn = existingTxnsForDate[0];
+      const reason =
+        entry.correctionReason?.trim() ||
+        `Amount updated from ${formatINR(primaryTxn.amount)} to ${formatINR(
+          roundedAmt
+        )} in Daily Collection Register`;
+      const auditEntry: AuditEntry = {
+        id: `AUD-${Date.now()}-${member.id}`,
+        originalAmount: primaryTxn.amount,
+        correctedAmount: roundedAmt,
+        correctionDate: state.settings.currentReferenceDate,
+        reason,
+        previousAllocations: primaryTxn.savingsAllocations,
+        correctedAllocations: [
+          { targetDate: paymentDateISO, amount: roundedAmt },
+        ],
+      };
+
+      updatedTransactions = updatedTransactions.map((t) =>
+        t.id === primaryTxn.id
+          ? {
+              ...t,
+              amount: roundedAmt,
+              savingsAllocations: [
+                { targetDate: paymentDateISO, amount: roundedAmt },
+              ],
+              description: `Daily savings contribution (${formatDateDDMMYYYY(
+                paymentDateISO
+              )}: ${formatINR(roundedAmt)})`,
+              auditTrail: [...t.auditTrail, auditEntry],
+            }
+          : t
+      );
+      updatedCount++;
+    } else {
+      // Create new Daily Savings transaction for this member and date
+      const newTxn: FinancialTransaction = {
+        id: `TXN-SAV-${Date.now()}-${member.id.toUpperCase()}-${Math.random()
+          .toString(36)
+          .slice(2, 5)
+          .toUpperCase()}`,
+        memberId: member.id,
+        category: 'Daily Savings',
+        amount: roundedAmt,
+        transactionDate: paymentDateISO,
+        createdAt: nowTimestamp,
+        description: `Daily savings contribution (${formatDateDDMMYYYY(
+          paymentDateISO
+        )}: ${formatINR(roundedAmt)})`,
+        notes: '',
+        savingsAllocations: [{ targetDate: paymentDateISO, amount: roundedAmt }],
+        auditTrail: [],
+      };
+      updatedTransactions = [newTxn, ...updatedTransactions];
+      savedCount++;
+    }
+  }
+
+  return {
+    nextState: {
+      ...state,
+      transactions: updatedTransactions,
+      lastUpdated: nowTimestamp,
+    },
+    savedCount,
+    updatedCount,
+  };
+}
+
 export function editSavingsTransactionWithAudit(
   state: AppDatabaseState,
   params: {
@@ -951,9 +1131,6 @@ export function editSavingsTransactionWithAudit(
   };
 }
 
-/**
- * Issues a new interest-free emergency loan (10 weeks, 10 instalments, 0% interest)
- */
 export function issueEmergencyLoan(
   state: AppDatabaseState,
   params: {
@@ -961,6 +1138,7 @@ export function issueEmergencyLoan(
     principalAmount: number;
     issueDateISO: string;
     firstInstalmentDateISO?: string;
+    repaymentDurationWeeks?: number;
     purpose?: string;
     notes?: string;
     allowExceedAvailableCash?: boolean;
@@ -972,6 +1150,7 @@ export function issueEmergencyLoan(
     principalAmount,
     issueDateISO,
     firstInstalmentDateISO = addDaysISO(issueDateISO, 7),
+    repaymentDurationWeeks = 10,
     purpose,
     notes,
     allowExceedAvailableCash = false,
@@ -981,6 +1160,7 @@ export function issueEmergencyLoan(
   if (!Number.isFinite(principalAmount) || principalAmount <= 0) {
     throw new Error('Loan principal amount must be greater than ₹0.');
   }
+  const weeks = Math.max(1, Math.round(repaymentDurationWeeks));
   const borrower = state.members.find((m) => m.id === borrowerId);
   if (!borrower) {
     throw new Error('Borrower member not found.');
@@ -995,10 +1175,11 @@ export function issueEmergencyLoan(
     );
   }
 
-  const instalments = generateTenWeeklyInstalments(
+  const instalments = generateWeeklyInstalments(
     principalAmount,
     firstInstalmentDateISO,
-    state.settings.currentReferenceDate
+    state.settings.currentReferenceDate,
+    weeks
   );
 
   const loanId = `LOAN-${Date.now()}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
@@ -1008,12 +1189,12 @@ export function issueEmergencyLoan(
     principalAmount: Math.round(principalAmount),
     issueDate: issueDateISO,
     firstInstalmentDate: firstInstalmentDateISO,
-    repaymentDurationWeeks: 10,
-    numberOfInstalments: 10,
+    repaymentDurationWeeks: weeks,
+    numberOfInstalments: weeks,
     interestRate: 0,
     totalRepayment: Math.round(principalAmount),
-    weeklyInstalmentAmount: Number((principalAmount / 10).toFixed(2)),
-    purpose: purpose || 'Emergency Personal Assistance',
+    weeklyInstalmentAmount: Number((principalAmount / weeks).toFixed(2)),
+    purpose: purpose?.trim() || '',
     notes: notes || '',
     instalments,
   };
@@ -1026,8 +1207,8 @@ export function issueEmergencyLoan(
     transactionDate: issueDateISO,
     createdAt: nowTimestamp,
     loanId,
-    description: `Interest-Free Emergency Loan Issued (10 weekly instalments)`,
-    notes: purpose || notes || '',
+    description: `Interest-Free Loan Issued (${weeks} weeks)`,
+    notes: purpose?.trim() || notes || '',
     auditTrail: [],
   };
 
@@ -1039,9 +1220,6 @@ export function issueEmergencyLoan(
   };
 }
 
-/**
- * Records a loan repayment and updates the 10-week instalment tracker
- */
 export function recordLoanRepayment(
   state: AppDatabaseState,
   params: {
@@ -1088,7 +1266,7 @@ export function recordLoanRepayment(
         paymentAmount
       )}) exceeds remaining loan principal (${formatINR(
         totalRemaining
-      )}). Loans are 0% interest—never overcharge.`
+      )}). Loans are 0% interest.`
     );
   }
 
@@ -1097,27 +1275,16 @@ export function recordLoanRepayment(
       ? instalmentAllocations
       : proposeLoanRepaymentAllocations(currentLoan, paymentAmount);
 
-  const allocSum = finalAllocations.reduce((s, a) => s + a.amount, 0);
-  if (Math.round(allocSum) !== Math.round(paymentAmount)) {
-    throw new Error(
-      `Instalment allocations (${formatINR(
-        allocSum
-      )}) must match the repayment amount (${formatINR(paymentAmount)}).`
-    );
-  }
-
   const repaymentTxn: FinancialTransaction = {
     id: `TXN-REP-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
     memberId: currentLoan.borrowerId,
     category: 'Loan Repayment',
-    amount: paymentAmount,
+    amount: Math.round(paymentAmount),
     transactionDate: paymentDateISO,
     createdAt: nowTimestamp,
     loanId,
     instalmentAllocations: finalAllocations,
-    description: `Loan repayment (${finalAllocations
-      .map((a) => `Inst #${a.instalmentNumber}: ${formatINR(a.amount)}`)
-      .join(', ')})`,
+    description: `Loan repayment (${formatINR(paymentAmount)})`,
     notes: notes || '',
     auditTrail: [],
   };

@@ -4,10 +4,8 @@ import {
   FileSpreadsheet,
   Download,
   Upload,
-  RotateCcw,
   CheckCircle2,
   AlertCircle,
-  Code2,
 } from 'lucide-react';
 import {
   AppDatabaseState,
@@ -20,7 +18,6 @@ import {
   getMemberSavingsForDate,
 } from '../domain/ledgerEngine';
 import {
-  exportAndroidKotlinRoomProject,
   exportDatabaseBackupJSON,
   exportReportToPDF,
   exportTableToExcelCSV,
@@ -536,14 +533,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </div>
       </section>
 
-      {/* SECTION 2: DATA SAFETY, OFFLINE BACKUP & RESTORE, AND ANDROID KOTLIN/ROOM EXPORT */}
+      {/* SECTION 2: DATA SAFETY, OFFLINE BACKUP & RESTORE */}
       <section
         aria-labelledby="backup-restore-heading"
         className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6"
       >
         <div className="pb-4 border-b border-slate-200">
           <div className="text-xs text-slate-500">
-            Offline-First Persistence · Complete Backup &amp; Restore · Android Room SQLite Export
+            Offline-First Persistence · Complete Backup &amp; Restore
           </div>
           <h2
             id="backup-restore-heading"
@@ -570,7 +567,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
         )}
 
-        <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Card 1: Full JSON Backup */}
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
             <div>
@@ -607,7 +604,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               </h3>
               <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                 Select a previously exported JSON backup file to restore all
-                member balances, savings allocations, and 10-week loan schedules.
+                member balances, savings records, and loan schedules.
               </p>
             </div>
             <label className="mt-4 w-full py-2.5 px-4 rounded-xl bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 text-xs font-semibold inline-flex items-center justify-center gap-2 min-h-[42px] cursor-pointer">
@@ -620,44 +617,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 className="sr-only"
               />
             </label>
-          </div>
-
-          {/* Card 3: Native Android Kotlin + Room Export & Demo Reset */}
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">
-                3. Android Kotlin / Room DB &amp; Reset
-              </h3>
-              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                Download the native Kotlin + Jetpack Compose + Room SQLite source
-                code or reset the local database to the initial seed state.
-              </p>
-            </div>
-            <div className="mt-4 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => exportAndroidKotlinRoomProject(state)}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 min-h-[42px]"
-              >
-                <Code2 className="w-4 h-4" />
-                <span>Kotlin Room DB</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onResetToDefaultSeed();
-                  setBackupMessage({
-                    type: 'success',
-                    text: 'Database reset to default 7-member verified seed state.',
-                  });
-                }}
-                aria-label="Reset demo data"
-                className="py-2.5 px-3 rounded-xl bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold inline-flex items-center justify-center gap-1 min-h-[42px]"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset</span>
-              </button>
-            </div>
           </div>
         </div>
       </section>

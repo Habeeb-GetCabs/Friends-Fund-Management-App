@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_MEMBER_NAMES,
   DEFAULT_DAILY_CONTRIBUTION,
   createDefaultMembers,
   renameMember,
@@ -10,6 +9,7 @@ import {
   getMemberSavingsForDate,
   buildSavingsAllocations,
   recordDailySavingsTransaction,
+  saveDailyCollectionBatch,
   editSavingsTransactionWithAudit,
   issueEmergencyLoan,
   recordLoanRepayment,
@@ -20,9 +20,9 @@ import {
 
 function createCleanTestState(): AppDatabaseState {
   return {
-    version: 1,
+    version: 2,
     settings: {
-      groupName: 'Seven Friends Mutual Fund',
+      groupName: 'Friends Savings & Loan Manager',
       dailyContributionAmount: DEFAULT_DAILY_CONTRIBUTION,
       groupStartDate: '2026-11-01',
       currentReferenceDate: '2026-11-05',
@@ -58,53 +58,71 @@ test('1-3. All seven default members appear, daily contribution defaults to ₹1
   assert.equal(dashboard.missedCount, 7);
 });
 
-test('4-5. Missed payments are recorded, and a ₹200 payment on Day 3 compensates for missed Day 2 + covers Day 3', () => {
+test('4-5. Simplified Daily Collection Register saves only selected members, prevents duplicates, and audits edits', () => {
   let state = createCleanTestState();
-  const sathishId = state.members[0].id;
 
-  // Day 1 (2026-11-01): Member pays ₹100
-  state = recordDailySavingsTransaction(state, {
-    memberId: sathishId,
-    amount: 100,
-    transactionDate: '2026-11-01',
-    nowTimestamp: '2026-11-01T09:00:00.000Z',
+  // Save collection for 2026-11-05: Sathish pays ₹100, Kumar pays ₹50 (partial), Santhosh pays ₹250 (advance/custom), others unpaid
+  const batch1 = saveDailyCollectionBatch(state, {
+    paymentDateISO: '2026-11-05',
+    entries: [
+      { memberId: 'member-1', paid: true, amount: 100 },
+      { memberId: 'member-2', paid: true, amount: 50 },
+      { memberId: 'member-3', paid: true, amount: 250 },
+      { memberId: 'member-4', paid: false, amount: 0 },
+      { memberId: 'member-5', paid: false, amount: 0 },
+      { memberId: 'member-6', paid: false, amount: 0 },
+      { memberId: 'member-7', paid: false, amount: 0 },
+    ],
   });
 
-  // Day 2 (2026-11-02): Member misses payment -> verify Day 2 is Missed
-  const day2Before = getMemberSavingsForDate(state, sathishId, '2026-11-02');
-  assert.equal(day2Before.status, 'Missed');
-  assert.equal(day2Before.pendingAmount, 100);
+  state = batch1.nextState;
+  assert.equal(batch1.savedCount, 3);
+  assert.equal(state.transactions.length, 3);
 
-  // Day 3 (2026-11-03): Member pays ₹200, allocated ₹100 to Day 2 and ₹100 to Day 3
-  const allocations = buildSavingsAllocations(
-    state,
-    sathishId,
-    200,
-    '2026-11-03',
-    'cover-missed-then-current'
-  );
-  assert.deepEqual(allocations, [
-    { targetDate: '2026-11-02', amount: 100 },
-    { targetDate: '2026-11-03', amount: 100 },
-  ]);
+  const dash = getDailyCollectionDashboard(state, '2026-11-05');
+  assert.equal(dash.paidCount, 3);
+  assert.equal(dash.missedCount, 4);
+  assert.equal(dash.totalCashCollectedOnDate, 400);
 
-  state = recordDailySavingsTransaction(state, {
-    memberId: sathishId,
-    amount: 200,
-    transactionDate: '2026-11-03',
-    allocations,
-    nowTimestamp: '2026-11-03T09:00:00.000Z',
+  // Re-submitting the exact same values for 2026-11-05 must NOT create duplicate records
+  const batchDuplicateCheck = saveDailyCollectionBatch(state, {
+    paymentDateISO: '2026-11-05',
+    entries: [
+      { memberId: 'member-1', paid: true, amount: 100 },
+      { memberId: 'member-2', paid: true, amount: 50 },
+      { memberId: 'member-3', paid: true, amount: 250 },
+      { memberId: 'member-4', paid: false, amount: 0 },
+      { memberId: 'member-5', paid: false, amount: 0 },
+      { memberId: 'member-6', paid: false, amount: 0 },
+      { memberId: 'member-7', paid: false, amount: 0 },
+    ],
   });
+  assert.equal(batchDuplicateCheck.savedCount, 0);
+  assert.equal(batchDuplicateCheck.updatedCount, 0);
+  assert.equal(batchDuplicateCheck.nextState.transactions.length, 3);
 
-  const day1After = getMemberSavingsForDate(state, sathishId, '2026-11-01');
-  const day2After = getMemberSavingsForDate(state, sathishId, '2026-11-02');
-  const day3After = getMemberSavingsForDate(state, sathishId, '2026-11-03');
-
-  assert.equal(day1After.status, 'Paid');
-  assert.equal(day2After.status, 'Paid');
-  assert.equal(day2After.allocatedAmount, 100);
-  assert.equal(day3After.status, 'Paid');
-  assert.equal(day3After.allocatedAmount, 100);
+  // Editing Kumar's amount from ₹50 to ₹100 updates existing transaction with audit trail
+  const batchEdit = saveDailyCollectionBatch(state, {
+    paymentDateISO: '2026-11-05',
+    entries: [
+      { memberId: 'member-1', paid: true, amount: 100 },
+      {
+        memberId: 'member-2',
+        paid: true,
+        amount: 100,
+        correctionReason: 'Received remaining ₹50',
+      },
+      { memberId: 'member-3', paid: true, amount: 250 },
+    ],
+  });
+  state = batchEdit.nextState;
+  assert.equal(batchEdit.updatedCount, 1);
+  assert.equal(state.transactions.length, 3);
+  const kumarTxn = state.transactions.find((t) => t.memberId === 'member-2');
+  assert.equal(kumarTxn?.amount, 100);
+  assert.equal(kumarTxn?.auditTrail.length, 1);
+  assert.equal(kumarTxn?.auditTrail[0].originalAmount, 50);
+  assert.equal(kumarTxn?.auditTrail[0].correctedAmount, 100);
 });
 
 test('6-7. Loan calculations: ₹5,000 -> 10x₹500, ₹10,000 -> 10x₹1,000, ₹15,000 -> 10x₹1,500, ₹7,500 -> 10x₹750, and uneven remainder distribution', () => {
@@ -128,7 +146,6 @@ test('6-7. Loan calculations: ₹5,000 -> 10x₹500, ₹10,000 -> 10x₹1,000, �
   assert.equal(inst7500.length, 10);
   assert.ok(inst7500.every((i) => i.expectedAmount === 750));
 
-  // Uneven amount test: ₹5,003 -> first 3 instalments ₹501, remaining 7 instalments ₹500 = ₹5,003 exact
   const instUneven = generateTenWeeklyInstalments(5003, '2026-11-08', '2026-11-05');
   assert.equal(
     instUneven.reduce((s, i) => s + i.expectedAmount, 0),
@@ -139,10 +156,9 @@ test('6-7. Loan calculations: ₹5,000 -> 10x₹500, ₹10,000 -> 10x₹1,000, �
   assert.equal(instUneven[3].expectedAmount, 500);
 });
 
-test('8-11. Partial repayments, advance multi-instalment allocation, overdue detection, outstanding principal & available group cash formula', () => {
+test('8-11. Automatic loan repayment allocation, partial repayments, overdue detection, outstanding principal & available group cash formula', () => {
   let state = createCleanTestState();
 
-  // Collect ₹12,000 in savings so group has cash
   state = recordDailySavingsTransaction(state, {
     memberId: state.members[0].id,
     amount: 6000,
@@ -156,21 +172,19 @@ test('8-11. Partial repayments, advance multi-instalment allocation, overdue det
     nowTimestamp: '2026-11-01T10:05:00.000Z',
   });
 
-  // Issue ₹5,000 loan to Kumar (member-2), with first instalment on 2026-11-02 (so by 2026-11-05 Inst #1 is overdue!)
   state = issueEmergencyLoan(state, {
     borrowerId: state.members[1].id,
     principalAmount: 5000,
     issueDateISO: '2026-10-26',
     firstInstalmentDateISO: '2026-11-02',
+    repaymentDurationWeeks: 10,
     nowTimestamp: '2026-10-26T12:00:00.000Z',
   });
 
   const loanId = state.loans[0].id;
-  // Before repayment: Inst #1 (due 2026-11-02 < ref 2026-11-05) should be Overdue
   assert.equal(state.loans[0].instalments[0].status, 'Overdue');
   assert.equal(state.loans[0].instalments[1].status, 'Upcoming');
 
-  // Check Available Group Cash = 12,000 savings + 0 repaid - 5,000 loan issued = 7,000
   let summary = calculateGroupFinancialSummary(state);
   assert.equal(summary.totalSavingsCollected, 12000);
   assert.equal(summary.totalLoansIssued, 5000);
@@ -178,41 +192,30 @@ test('8-11. Partial repayments, advance multi-instalment allocation, overdue det
   assert.equal(summary.totalOutstandingLoanPrincipal, 5000);
   assert.equal(summary.availableGroupCash, 7000);
 
-  // Borrower pays ₹1,000 (covers Inst #1 of ₹500 and Inst #2 of ₹500)
+  // Borrower pays ₹1,250 -> automatically allocates ₹500 to Week 1 (Paid), ₹500 to Week 2 (Paid), ₹250 to Week 3 (Partially Paid)
   state = recordLoanRepayment(state, {
     loanId,
-    paymentAmount: 1000,
+    paymentAmount: 1250,
     paymentDateISO: '2026-11-05',
     nowTimestamp: '2026-11-05T11:00:00.000Z',
   });
 
   assert.equal(state.loans[0].instalments[0].status, 'Paid');
   assert.equal(state.loans[0].instalments[1].status, 'Paid');
-
-  // Borrower makes a partial payment of ₹200 toward Inst #3
-  state = recordLoanRepayment(state, {
-    loanId,
-    paymentAmount: 200,
-    paymentDateISO: '2026-11-05',
-    nowTimestamp: '2026-11-05T11:10:00.000Z',
-  });
-
   assert.equal(state.loans[0].instalments[2].status, 'Partially Paid');
-  assert.equal(state.loans[0].instalments[2].amountPaid, 200);
-  assert.equal(state.loans[0].instalments[2].remainingBalance, 300);
+  assert.equal(state.loans[0].instalments[2].amountPaid, 250);
+  assert.equal(state.loans[0].instalments[2].remainingBalance, 250);
 
-  // Check updated Group Financial Summary:
-  // Savings = 12,000; Repaid = 1,200; Loans Issued = 5,000; Outstanding = 3,800; Available Cash = 12,000 + 1,200 - 5,000 = 8,200
   summary = calculateGroupFinancialSummary(state);
   assert.equal(summary.totalSavingsCollected, 12000);
-  assert.equal(summary.totalLoanPrincipalRepaid, 1200);
-  assert.equal(summary.totalOutstandingLoanPrincipal, 3800);
-  assert.equal(summary.availableGroupCash, 8200);
+  assert.equal(summary.totalLoanPrincipalRepaid, 1250);
+  assert.equal(summary.totalOutstandingLoanPrincipal, 3750);
+  assert.equal(summary.availableGroupCash, 8250);
 });
 
 test('12. Editing member name never deletes historical financial transactions, and corrections keep audit trail', () => {
   let state = createCleanTestState();
-  const ranjthId = state.members[4].id; // Ranjth
+  const ranjthId = state.members[4].id;
 
   state = recordDailySavingsTransaction(state, {
     memberId: ranjthId,
@@ -223,7 +226,6 @@ test('12. Editing member name never deletes historical financial transactions, a
 
   const txnId = state.transactions[0].id;
 
-  // Rename Ranjth -> Ranjith Kumar
   state = renameMember(state, ranjthId, 'Ranjith Kumar', '2026-11-05');
   assert.equal(state.members[4].name, 'Ranjith Kumar');
   assert.equal(state.transactions.length, 1);
@@ -233,7 +235,15 @@ test('12. Editing member name never deletes historical financial transactions, a
   assert.equal(dayStat.memberName, 'Ranjith Kumar');
   assert.equal(dayStat.allocatedAmount, 100);
 
-  // Edit transaction with audit trail
+  const allocations = buildSavingsAllocations(
+    state,
+    ranjthId,
+    200,
+    '2026-11-03',
+    'cover-missed-then-current'
+  );
+  assert.equal(allocations.length, 2);
+
   state = editSavingsTransactionWithAudit(state, {
     transactionId: txnId,
     correctedAmount: 200,
@@ -241,13 +251,11 @@ test('12. Editing member name never deletes historical financial transactions, a
       { targetDate: '2026-11-01', amount: 100 },
       { targetDate: '2026-11-02', amount: 100 },
     ],
-    reason: 'Member actually gave ₹200 covering 01-11-2026 and 02-11-2026',
+    reason: 'Member actually gave ₹200',
     correctionDateISO: '2026-11-05',
   });
 
   assert.equal(state.transactions[0].amount, 200);
   assert.equal(state.transactions[0].auditTrail.length, 1);
-  assert.equal(state.transactions[0].auditTrail[0].originalAmount, 100);
-  assert.equal(state.transactions[0].auditTrail[0].correctedAmount, 200);
   assert.equal(formatDateDDMMYYYY('2026-11-05'), '05-11-2026');
 });

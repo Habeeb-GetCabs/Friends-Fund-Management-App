@@ -11,18 +11,17 @@ import {
   HandCoins,
   FileBarChart2,
   CheckCircle2,
+  PlusCircle,
 } from 'lucide-react';
 import {
   AppDatabaseState,
-  InstalmentAllocation,
-  SavingsAllocation,
-  editSavingsTransactionWithAudit,
+  DailyRegisterEntryInput,
   formatDateDDMMYYYY,
   formatINR,
   issueEmergencyLoan,
-  recordDailySavingsTransaction,
   recordLoanRepayment,
   renameMember,
+  saveDailyCollectionBatch,
 } from './domain/ledgerEngine';
 import {
   createSeedDatabaseState,
@@ -36,7 +35,6 @@ import { SavingsView } from './components/SavingsView';
 import { LoansView } from './components/LoansView';
 import { ReportsView } from './components/ReportsView';
 import { RecordSavingsModal } from './components/RecordSavingsModal';
-import { PWAInstallButton } from './components/PWAInstallButton';
 
 export type NavTab = 'dashboard' | 'members' | 'savings' | 'loans' | 'reports';
 
@@ -50,7 +48,7 @@ export default function App() {
   );
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
 
-  // Record Savings Modal State
+  // Record Daily Collection Register Modal State
   const [savingsModalOpen, setSavingsModalOpen] = useState(false);
   const [savingsModalMemberId, setSavingsModalMemberId] = useState<
     string | undefined
@@ -79,30 +77,32 @@ export default function App() {
     setSavingsModalOpen(true);
   };
 
-  const handleRecordSavingsSubmit = (params: {
-    memberId: string;
-    amount: number;
-    transactionDate: string;
-    allocations: SavingsAllocation[];
-    description?: string;
-    notes?: string;
+  const handleSaveCollectionBatch = (params: {
+    paymentDateISO: string;
+    entries: DailyRegisterEntryInput[];
   }) => {
-    const next = recordDailySavingsTransaction(state, params);
-    setState(next);
-    const member = state.members.find((m) => m.id === params.memberId);
+    const { nextState } = saveDailyCollectionBatch(state, params);
+    setState(nextState);
+    setSelectedDate(params.paymentDateISO);
+    const paidEntries = params.entries.filter(
+      (e) => e.paid && e.amount > 0
+    );
+    const totalCollected = paidEntries.reduce((s, e) => s + e.amount, 0);
     showToast(
-      `Saved ${formatINR(params.amount)} contribution for ${
-        member?.name || 'Member'
-      } (${params.allocations
-        .map((a) => formatDateDDMMYYYY(a.targetDate))
-        .join(', ')}).`
+      `Saved daily collection for ${formatDateDDMMYYYY(
+        params.paymentDateISO
+      )} — ${paidEntries.length} / ${
+        state.members.length
+      } members paid (${formatINR(totalCollected)}).`
     );
   };
 
   const handleRenameMember = (memberId: string, newName: string) => {
     const next = renameMember(state, memberId, newName);
     setState(next);
-    showToast(`Member renamed to "${newName.trim()}". All historical transactions preserved.`);
+    showToast(
+      `Member renamed to "${newName.trim()}". All historical transactions preserved.`
+    );
   };
 
   const handleUpdateDailyContribution = (newAmount: number) => {
@@ -115,26 +115,9 @@ export default function App() {
       lastUpdated: new Date().toISOString(),
     }));
     showToast(
-      `Daily contribution rate updated to ${formatINR(
+      `Expected daily contribution updated to ${formatINR(
         newAmount
-      )} per member (Expected daily group total: ${formatINR(
-        newAmount * state.members.length
-      )}).`
-    );
-  };
-
-  const handleCorrectSavingsTransaction = (params: {
-    transactionId: string;
-    correctedAmount: number;
-    correctedAllocations: SavingsAllocation[];
-    reason: string;
-  }) => {
-    const next = editSavingsTransactionWithAudit(state, params);
-    setState(next);
-    showToast(
-      `Audited correction saved for ${params.transactionId} (${formatINR(
-        params.correctedAmount
-      )}).`
+      )} per member.`
     );
   };
 
@@ -143,8 +126,8 @@ export default function App() {
     principalAmount: number;
     issueDateISO: string;
     firstInstalmentDateISO: string;
+    repaymentDurationWeeks: number;
     purpose?: string;
-    notes?: string;
     allowExceedAvailableCash?: boolean;
   }) => {
     const next = issueEmergencyLoan(state, params);
@@ -153,7 +136,7 @@ export default function App() {
     showToast(
       `Issued ${formatINR(params.principalAmount)} interest-free loan to ${
         borrower?.name || 'Member'
-      } (10 weekly instalments generated).`
+      } (${params.repaymentDurationWeeks} weekly instalments generated).`
     );
   };
 
@@ -161,13 +144,14 @@ export default function App() {
     loanId: string;
     paymentAmount: number;
     paymentDateISO: string;
-    instalmentAllocations: InstalmentAllocation[];
     notes?: string;
   }) => {
     const next = recordLoanRepayment(state, params);
     setState(next);
     showToast(
-      `Recorded ${formatINR(params.paymentAmount)} weekly loan repayment.`
+      `Recorded ${formatINR(params.paymentAmount)} loan repayment on ${formatDateDDMMYYYY(
+        params.paymentDateISO
+      )}.`
     );
   };
 
@@ -198,7 +182,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col pb-20 md:pb-10">
-      {/* STRICT 3-ZONE TOP BAR CONTRACT */}
+      {/* STRICT 3-ZONE TOP BAR CONTRACT (APK button completely removed) */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-8">
         {/* Zone 1: Single text element wordmark */}
         <a
@@ -242,9 +226,16 @@ export default function App() {
           })}
         </nav>
 
-        {/* Zone 3: 1 primary action */}
+        {/* Zone 3: 1 primary action (Record Collection) */}
         <div className="flex items-center shrink-0">
-          <PWAInstallButton state={state} />
+          <button
+            type="button"
+            onClick={() => handleOpenRecordSavings(undefined, selectedDate)}
+            className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 min-h-[38px]"
+          >
+            <PlusCircle className="w-4 h-4 shrink-0" />
+            <span>Record Collection</span>
+          </button>
         </div>
       </header>
 
@@ -301,7 +292,6 @@ export default function App() {
           <SavingsView
             state={state}
             onOpenRecordSavings={handleOpenRecordSavings}
-            onCorrectSavingsTransaction={handleCorrectSavingsTransaction}
           />
         )}
 
@@ -362,14 +352,14 @@ export default function App() {
         </div>
       </nav>
 
-      {/* RECORD DAILY SAVINGS MODAL */}
+      {/* DAILY COLLECTION REGISTER MODAL */}
       {savingsModalOpen && (
         <RecordSavingsModal
           state={state}
           initialMemberId={savingsModalMemberId}
           initialDateISO={savingsModalDateISO}
           onClose={() => setSavingsModalOpen(false)}
-          onSubmitSavings={handleRecordSavingsSubmit}
+          onSaveCollectionBatch={handleSaveCollectionBatch}
         />
       )}
     </div>
